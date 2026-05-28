@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+
+# Secrets & local
+.env
+*.pem
+
+# Données générées
+output/
+logs/
+*.log
+proofs/
+
+# Binaires / médias lourds
+*.apk
+debug_*.png
+images-models/
+images_ocr/
+partenaire_drivers_scrape/
+
+# IDE / OS
+.cursor/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Divers local
+call_list.csv
+driver.apk
