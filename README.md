@@ -36,3 +36,12 @@ Ouvrir : **http://127.0.0.1:8765/**
 ## Planification
 
 L’extraction auto nécessite que le serveur dashboard reste lancé à l’heure configurée (onglet **Lancer** → **Enregistrer**).
+
+## Archives ZIP
+
+Après les rapports HTML, le runner crée un ZIP par lot dans `output/partner_automation/zip_soir/` :
+
+- `rapport_soir_P01_P10_*.zip` — global du lot + `P01`…`P10`
+- `rapport_soir_P11_P20_*.zip` — global du lot + `P11`…`P20`
+
+Dashboard : cocher **Créer ZIP par lot** ou **ZIP seulement** (HTML déjà présents). Téléchargement dans l’onglet **Exports HTML**.

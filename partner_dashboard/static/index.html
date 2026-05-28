@@ -112,6 +112,13 @@
           <label class="checkbox-row" style="margin-top:12px">
             <input type="checkbox" id="chk-headed" /> Navigateur visible (headed)
           </label>
+          <label class="checkbox-row">
+            <input type="checkbox" id="chk-zip" checked /> Créer ZIP par lot (global P01–P10 / P11–P20 + rapports campagne)
+          </label>
+          <div style="margin-top:8px">
+            <button type="button" class="btn btn-outline-dark" id="btn-run-zip">ZIP seulement</button>
+            <span style="font-size:12px;color:var(--muted);margin-left:8px">Depuis les HTML déjà générés</span>
+          </div>
         </div>
         <div class="card">
           <h2>Planification <span class="gold" id="sched-time-display">17:00</span></h2>
@@ -146,6 +153,11 @@
         <ul id="list-global-html" style="list-style:none;font-size:14px"></ul>
         <h3 style="font-size:14px;margin:16px 0 8px">Par campagne</h3>
         <div style="display:flex;flex-wrap:wrap;gap:8px" id="list-campaign-html"></div>
+        <h3 style="font-size:14px;margin:20px 0 8px">Archives ZIP <span class="gold">(lots)</span></h3>
+        <p style="font-size:12px;color:var(--muted);margin-bottom:8px">
+          Un ZIP par lot : rapport global du lot + P01…P10 (ou P11…P20), comme les pièces jointes email.
+        </p>
+        <ul id="list-zip-files" style="list-style:none;font-size:14px"></ul>
       </div>
     </section>
   </main>

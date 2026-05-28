@@ -9,6 +9,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent.parent
 OUTPUT_DIR = SCRIPT_DIR / "output" / "partner_automation"
 STATE_FILE = OUTPUT_DIR / "state.json"
 ACTIVATION_DIR = OUTPUT_DIR / "rapports_activation"
+ZIP_DIR = OUTPUT_DIR / "zip_soir"
 DASHBOARD_DIR = OUTPUT_DIR / "dashboard"
 JOB_STATUS_FILE = DASHBOARD_DIR / "job_status.json"
 SCHEDULER_STATE_FILE = DASHBOARD_DIR / "scheduler_state.json"

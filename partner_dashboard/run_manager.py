@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import threading
@@ -34,6 +35,7 @@ _NIGHTLY_PHASE_RE = re.compile(
     r"(NIGHTLY|Export|Activation lot|TERMINÉ|ZIP lot|rapport_partenaires)",
     re.I,
 )
+_ZIP_LOT_RE = re.compile(r"ZIP lot\s+(\d+)-(\d+)", re.I)
 
 
 @dataclass
@@ -57,6 +59,35 @@ class JobStatus:
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+def _kill_process_tree(proc: subprocess.Popen[str]) -> None:
+    """Termine le processus et ses enfants (Selenium, sous-scripts Python)."""
+    if proc.poll() is not None:
+        return
+    pid = proc.pid
+    try:
+        if sys.platform == "win32":
+            flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            subprocess.run(
+                ["taskkill", "/PID", str(pid), "/T", "/F"],
+                capture_output=True,
+                timeout=20,
+                creationflags=flags,
+            )
+        else:
+            pgid = os.getpgid(pid)
+            os.killpg(pgid, signal.SIGTERM)
+    except (ProcessLookupError, OSError):
+        proc.terminate()
+    try:
+        proc.wait(timeout=8)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        try:
+            proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            pass
 
 
 def _parse_campaign_range(extra: list[str]) -> tuple[int, int, int]:
@@ -137,6 +168,10 @@ class RunManager:
             job.phase = "export"
             job.phase_label = f"Export admin — campagne {slot_pos}/{total}"
             pct = int(slot_pos / total * 72)
+        elif job.kind == "zip":
+            job.phase = "zip"
+            job.phase_label = f"ZIP — lot en cours ({slot_pos}/{total})"
+            pct = int(slot_pos / total * 90)
         else:
             job.phase_label = f"Campagne {slot_pos}/{total}"
             pct = int(slot_pos / total * 50)
@@ -185,7 +220,16 @@ class RunManager:
             job.phase = "activation"
             job.phase_label = "Génération rapports HTML"
             job.progress_pct = max(job.progress_pct, 75)
-        if "ZIP lot" in line:
+        zm = _ZIP_LOT_RE.search(line)
+        if zm:
+            job.phase = "zip"
+            lot_end = int(zm.group(2))
+            job.phase_label = f"ZIP lot {zm.group(1)}-{zm.group(2)} (global + campagnes)"
+            if lot_end <= 10:
+                job.progress_pct = max(job.progress_pct, 50)
+            else:
+                job.progress_pct = max(job.progress_pct, 95)
+        elif "ZIP lot" in line:
             job.phase = "zip"
             job.phase_label = "Création des archives ZIP"
             job.progress_pct = max(job.progress_pct, 90)
@@ -211,22 +255,28 @@ class RunManager:
         with self._lock:
             proc = self._proc
             job = self._current
+        if not job or job.status != "running":
+            return False
+        self._append_log(job, "[STOP] Arrêt demandé — fermeture de l'arbre de processus…")
+        self._notify(job)
         if proc and proc.poll() is None:
-            proc.terminate()
-            if job:
-                job.status = "cancelled"
-                job.phase_label = "Arrêt demandé"
-                job.finished_at = datetime.now().isoformat(timespec="seconds")
-                self._notify(job)
-            return True
-        return False
+            _kill_process_tree(proc)
+        job.status = "cancelled"
+        job.phase = "cancelled"
+        job.phase_label = "Arrêté par l'utilisateur"
+        job.finished_at = datetime.now().isoformat(timespec="seconds")
+        job.exit_code = -1
+        self._append_log(job, "[STOP] Tâche annulée.")
+        self._notify(job)
+        return True
 
     def start_nightly(
         self,
         *,
         headed: bool = False,
         skip_email: bool = True,
-        skip_zip: bool = True,
+        skip_zip: bool = False,
+        lots: str = "1-10,11-20",
         start: int = 1,
         end: int = 20,
     ) -> dict[str, Any]:
@@ -238,7 +288,7 @@ class RunManager:
             "--end",
             str(end),
             "--lots",
-            "1-10,11-20",
+            lots,
         ]
         if headed:
             extra.append("--headed")
@@ -246,13 +296,33 @@ class RunManager:
             extra.append("--skip-email")
         if skip_zip:
             extra.append("--skip-zip")
+        label = "Rapports du soir"
+        if not skip_zip:
+            label += " + ZIP"
         return self._start(
             kind="nightly",
             script=NIGHTLY_SCRIPT,
             extra=extra,
-            phase_label="Rapports du soir",
+            phase_label=label,
             campaign_start=start,
             campaign_end=end,
+        )
+
+    def start_zip_only(self, *, lots: str = "1-10,11-20") -> dict[str, Any]:
+        if self.is_running():
+            return {"ok": False, "error": "Un job est déjà en cours."}
+        extra = [
+            "--skip-export",
+            "--skip-activation",
+            "--skip-email",
+            "--lots",
+            lots,
+        ]
+        return self._start(
+            kind="zip",
+            script=NIGHTLY_SCRIPT,
+            extra=extra,
+            phase_label="Archives ZIP par lot",
         )
 
     def start_orchestrator(
@@ -338,17 +408,19 @@ class RunManager:
                 env = os.environ.copy()
                 env.setdefault("PYTHONIOENCODING", "utf-8")
                 env.setdefault("PYTHONUTF8", "1")
-                proc = subprocess.Popen(
-                    cmd,
-                    cwd=str(SCRIPT_DIR),
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    encoding="utf-8",
-                    errors="replace",
-                    bufsize=1,
-                    env=env,
-                )
+                popen_kw: dict[str, Any] = {
+                    "cwd": str(SCRIPT_DIR),
+                    "stdout": subprocess.PIPE,
+                    "stderr": subprocess.STDOUT,
+                    "text": True,
+                    "encoding": "utf-8",
+                    "errors": "replace",
+                    "bufsize": 1,
+                    "env": env,
+                }
+                if sys.platform != "win32":
+                    popen_kw["start_new_session"] = True
+                proc = subprocess.Popen(cmd, **popen_kw)
                 with self._lock:
                     self._proc = proc
                 if proc.stdout:

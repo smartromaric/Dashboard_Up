@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,7 @@ from partner_dashboard.config import (
     SCRIPT_DIR,
     STATE_FILE,
     STATIC_DIR,
+    ZIP_DIR,
 )
 from partner_dashboard.metrics import (
     build_dashboard_payload,
@@ -69,9 +71,14 @@ run_manager.subscribe(_on_job_update)
 class NightlyRunBody(BaseModel):
     headed: bool = False
     skip_email: bool = True
-    skip_zip: bool = True
+    skip_zip: bool = False
+    lots: str = "1-10,11-20"
     start: int = Field(1, ge=1, le=20)
     end: int = Field(20, ge=1, le=20)
+
+
+class ZipOnlyRunBody(BaseModel):
+    lots: str = "1-10,11-20"
 
 
 class OrchestratorRunBody(BaseModel):
@@ -176,15 +183,51 @@ def serve_html_report(file_path: str) -> FileResponse:
     return FileResponse(target, media_type="text/html; charset=utf-8")
 
 
+@app.get("/api/reports/zip")
+def list_zip_reports() -> dict[str, Any]:
+    ZIP_DIR.mkdir(parents=True, exist_ok=True)
+    files = sorted(ZIP_DIR.glob("rapport_soir_*.zip"), key=lambda p: p.stat().st_mtime, reverse=True)
+    items = []
+    for p in files[:20]:
+        st = p.stat()
+        items.append(
+            {
+                "name": p.name,
+                "size_kb": round(st.st_size / 1024),
+                "modified": datetime.fromtimestamp(st.st_mtime).isoformat(timespec="seconds"),
+                "path": f"/api/reports/zip/file/{p.name}",
+            }
+        )
+    return {"dir": str(ZIP_DIR), "files": items}
+
+
+@app.get("/api/reports/zip/file/{filename}")
+def serve_zip_report(filename: str) -> FileResponse:
+    if "/" in filename or "\\" in filename or ".." in filename:
+        raise HTTPException(403, "Nom de fichier invalide.")
+    target = (ZIP_DIR / filename).resolve()
+    if not str(target).startswith(str(ZIP_DIR.resolve())):
+        raise HTTPException(403, "Chemin interdit.")
+    if not target.is_file() or target.suffix.lower() != ".zip":
+        raise HTTPException(404, "Archive introuvable.")
+    return FileResponse(target, media_type="application/zip", filename=target.name)
+
+
 @app.post("/api/runs/nightly")
 def run_nightly(body: NightlyRunBody) -> dict[str, Any]:
     return run_manager.start_nightly(
         headed=body.headed,
         skip_email=body.skip_email,
         skip_zip=body.skip_zip,
+        lots=body.lots,
         start=body.start,
         end=body.end,
     )
+
+
+@app.post("/api/runs/zip-only")
+def run_zip_only(body: ZipOnlyRunBody) -> dict[str, Any]:
+    return run_manager.start_zip_only(lots=body.lots)
 
 
 @app.post("/api/runs/orchestrator")

@@ -141,7 +141,7 @@ class AutoScheduler:
             return False
         if run_manager.is_running():
             return False
-        res = run_manager.start_nightly(skip_email=True, skip_zip=True)
+        res = run_manager.start_nightly(skip_email=True, skip_zip=False)
         self._mark_run("started" if res.get("ok") else res.get("error", "failed"))
         return True
 

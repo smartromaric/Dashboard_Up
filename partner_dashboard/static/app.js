@@ -73,7 +73,14 @@ function formatCampaignProgress(job) {
 
 function setLaunchButtonsDisabled(disabled) {
   document.body.classList.toggle("job-running", disabled);
-  ["#btn-nightly", "#btn-orchestrator", "#btn-run-nightly", "#btn-run-orch", "#btn-run-html"].forEach(
+  [
+    "#btn-nightly",
+    "#btn-orchestrator",
+    "#btn-run-nightly",
+    "#btn-run-orch",
+    "#btn-run-html",
+    "#btn-run-zip",
+  ].forEach(
     (sel) => {
       const el = $(sel);
       if (el) {
@@ -375,9 +382,29 @@ async function loadHtmlList() {
           `<a class="btn btn-outline-dark" style="text-decoration:none" href="${f.path}" target="_blank">${f.name.replace("_rapport_activation.html", "")}</a>`,
       )
       .join("");
+    const zipRes = await fetch("/api/reports/zip");
+    const zipData = await zipRes.json();
+    const zipList = $("#list-zip-files");
+    if (zipList) {
+      zipList.innerHTML = (zipData.files || [])
+        .map(
+          (z) =>
+            `<li style="margin-bottom:6px"><a href="${z.path}" download="${z.name}">${z.name}</a> <span style="color:var(--muted);font-size:12px">${z.size_kb} Ko</span></li>`,
+        )
+        .join("") || "<li>Aucun ZIP — lancez « Rapports du soir » avec ZIP coché ou « ZIP seulement »</li>";
+    }
   } catch (_) {
     /* ignore */
   }
+}
+
+function nightlyBody() {
+  return {
+    headed: $("#chk-headed").checked,
+    skip_email: true,
+    skip_zip: !$("#chk-zip").checked,
+    lots: "1-10,11-20",
+  };
 }
 
 function updateRunUI(job) {
@@ -408,7 +435,12 @@ function updateRunUI(job) {
   if (job.status === "completed" && !notifiedComplete) {
     notifiedComplete = true;
     playSuccessSound();
-    showToast("Extraction terminée — rapports du jour prêts");
+    const zipDone = (job.logs || []).some((l) => /ZIP lot/i.test(l));
+    showToast(
+      zipDone
+        ? "Terminé — rapports HTML et archives ZIP prêts"
+        : "Extraction terminée — rapports du jour prêts",
+    );
     loadDashboard();
     loadHtmlList();
     updateJobBanner(job);
@@ -531,23 +563,28 @@ function bindEvents() {
 
   const headed = () => $("#chk-headed").checked;
 
-  $("#btn-nightly").addEventListener("click", () =>
-    startRun("/api/runs/nightly", { headed: headed(), skip_email: true, skip_zip: true }),
-  );
+  $("#btn-nightly").addEventListener("click", () => startRun("/api/runs/nightly", nightlyBody()));
   $("#btn-orchestrator").addEventListener("click", () =>
     startRun("/api/runs/orchestrator", { headed: headed() }),
   );
-  $("#btn-run-nightly").addEventListener("click", () =>
-    startRun("/api/runs/nightly", { headed: headed(), skip_email: true, skip_zip: true }),
+  $("#btn-run-nightly").addEventListener("click", () => startRun("/api/runs/nightly", nightlyBody()));
+  $("#btn-run-zip").addEventListener("click", () =>
+    startRun("/api/runs/zip-only", { lots: "1-10,11-20" }),
   );
   $("#btn-run-orch").addEventListener("click", () =>
     startRun("/api/runs/orchestrator", { headed: headed() }),
   );
   $("#btn-run-html").addEventListener("click", () => startRun("/api/runs/html-only", {}));
   async function requestStop() {
-    await fetch("/api/runs/stop", { method: "POST" });
-    showToast("Arrêt demandé…");
+    const res = await fetch("/api/runs/stop", { method: "POST" });
+    const data = await res.json().catch(() => ({}));
+    if (data.stopped) {
+      showToast("Arrêt en cours — fermeture Selenium et scripts…");
+    } else {
+      showToast("Aucune tâche active à arrêter");
+    }
     setTimeout(pollCurrentRun, 400);
+    setTimeout(pollCurrentRun, 2000);
   }
 
   $("#btn-stop").addEventListener("click", requestStop);
